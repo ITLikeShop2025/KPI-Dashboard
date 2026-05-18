@@ -1635,6 +1635,7 @@
         <button class="btn-foot" onclick="document.getElementById('importFile').click()"><i
             class="ph ph-upload-simple"></i> Import Excel</button>
         <input type="file" id="importFile" accept=".xlsx,.xls" onchange="importXLSX(this)">
+        <button class="btn-foot" onclick="uploadLocalDataToSupabase()"><i class="ph ph-cloud-arrow-up"></i> Sync Supabase</button>
         <button class="btn-foot" onclick="exportJSON()" style="border-style:dashed"><i class="ph ph-code"></i> Export
           JSON</button>
       </div>
@@ -2218,6 +2219,41 @@ create table if not exists kpi_manual (id int, month int, year int, value real, 
       } finally { isRemoteHydrating = false; }
     }
 
+    async function uploadLocalDataToSupabase() {
+      if (!supabaseClient) { toast('กรุณาใส่ SUPABASE_URL และ SUPABASE_ANON_KEY ก่อน', true); return; }
+      try {
+        await repairStoredTextData();
+        let total = 0;
+        for (const [tbl, cols] of Object.entries(SYNC_TABLES)) {
+          let rows = query(`SELECT * FROM ${tbl}`);
+          if (tbl === 'kpi_manual') {
+            const manualRows = [];
+            Object.entries(ALL || {}).forEach(([mk, vals]) => {
+              const [monthName, yearText] = mk.split(' ');
+              const month = MONTHS.indexOf(monthName);
+              const year = parseInt(yearText, 10);
+              if (month < 0 || !year) return;
+              Object.entries(vals || {}).forEach(([id, value]) => {
+                if (value !== '' && value != null) manualRows.push({ id: parseInt(id, 10), month, year, value: parseFloat(value) || 0 });
+              });
+            });
+            const merged = new Map();
+            [...rows, ...manualRows].forEach(row => merged.set(`${row.id}-${row.month}-${row.year}`, row));
+            rows = [...merged.values()];
+          }
+          if (!rows.length) continue;
+          const payload = rows.map(row => Object.fromEntries(cols.map(c => [c, row[c] ?? null])));
+          const { error } = await supabaseClient.from(tbl).upsert(payload);
+          if (error) throw error;
+          total += payload.length;
+        }
+        toast(`ย้ายข้อมูลขึ้น Supabase สำเร็จ ${total} รายการ`);
+      } catch (e) {
+        console.error('Supabase upload', e);
+        toast('ย้ายข้อมูลขึ้น Supabase ไม่สำเร็จ: ' + e.message, true);
+      }
+    }
+    window.uploadLocalDataToSupabase = uploadLocalDataToSupabase;
     // ═══ KPI SCORE ENGINE ═══
     function calcScore(id, val) {
       const v = parseFloat(val) || 0;
