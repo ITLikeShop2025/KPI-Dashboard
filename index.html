@@ -2086,7 +2086,7 @@
     const SUPABASE_ENABLED = !SUPABASE_URL.includes('YOUR_PROJECT_ID') && !SUPABASE_ANON_KEY.includes('YOUR_SUPABASE_ANON_KEY') && window.supabase;
     const supabaseClient = SUPABASE_ENABLED ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
     const SYNC_TABLES = {
-      tickets: ['id', 'month', 'year', 'date', 'dept', 'problem', 'resolveTime', 'csat', 'status', 'selfService', 'note'],
+      tickets: ['id', 'month', 'year', 'date', 'dept', 'problem', 'resolveTime', 'csat', 'status', 'selfService', 'repeatRepair', 'note'],
       pm: ['id', 'month', 'year', 'name', 'type', 'location', 'done', 'pmDate'],
       systems: ['id', 'month', 'year', 'name', 'type', 'approveDate', 'installDate', 'status'],
       uptime: ['id', 'month', 'year', 'date', 'location', 'system', 'cause', 'duration'],
@@ -2096,7 +2096,7 @@
       kpi_manual: ['id', 'month', 'year', 'value']
     };
     const SUPABASE_SCHEMA = `
-create table if not exists tickets (id text primary key, month int, year int, date text, dept text, problem text, "resolveTime" real, csat real, status text, "selfService" int, note text);
+create table if not exists tickets (id text primary key, month int, year int, date text, dept text, problem text, "resolveTime" real, csat real, status text, "selfService" int, "repeatRepair" int default 0, note text);
 create table if not exists pm (id text primary key, month int, year int, name text, type text, location text, done int, "pmDate" text);
 create table if not exists systems (id text primary key, month int, year int, name text, type text, "approveDate" text, "installDate" text, status text);
 create table if not exists uptime (id text primary key, month int, year int, date text, location text, system text, cause text, duration real);
@@ -2151,7 +2151,8 @@ create table if not exists kpi_manual (id int, month int, year int, value real, 
       const SQL = await initSqlJs({ locateFile: () => WASM_URL });
       const saved = localStorage.getItem('itkpi_sqlitedb');
       db = saved ? new SQL.Database(new Uint8Array(JSON.parse(saved))) : new SQL.Database();
-      db.run(`CREATE TABLE IF NOT EXISTS tickets(id TEXT PRIMARY KEY,month INT,year INT,date TEXT,dept TEXT,problem TEXT,resolveTime REAL,csat REAL,status TEXT,selfService INT,note TEXT)`);
+      db.run(`CREATE TABLE IF NOT EXISTS tickets(id TEXT PRIMARY KEY,month INT,year INT,date TEXT,dept TEXT,problem TEXT,resolveTime REAL,csat REAL,status TEXT,selfService INT,repeatRepair INT DEFAULT 0,note TEXT)`);
+      try { db.run(`ALTER TABLE tickets ADD COLUMN repeatRepair INT DEFAULT 0`); } catch(e) { /* column already exists - ok */ }
       db.run(`CREATE TABLE IF NOT EXISTS pm(id TEXT PRIMARY KEY,month INT,year INT,name TEXT,type TEXT,location TEXT,done INT,pmDate TEXT)`);
       db.run(`CREATE TABLE IF NOT EXISTS systems(id TEXT PRIMARY KEY,month INT,year INT,name TEXT,type TEXT,approveDate TEXT,installDate TEXT,status TEXT)`);
       db.run(`CREATE TABLE IF NOT EXISTS uptime(id TEXT PRIMARY KEY,month INT,year INT,date TEXT,location TEXT,system TEXT,cause TEXT,duration REAL)`);
@@ -2303,7 +2304,7 @@ create table if not exists kpi_manual (id int, month int, year int, value real, 
 
       const kpi1 = m1.length ? m1[0].value : 0;
       const kpi2 = closed.length ? Math.round(closed.reduce((a, t) => a + Number(t.resolveTime || 0), 0) / closed.length) : 0;
-      let kpi3 = 0; T.forEach(t => { if (T.filter(t2 => t2.id !== t.id && t2.dept === t.dept && Math.abs(new Date(t2.date) - new Date(t.date)) < 172800000).length > 0) kpi3++; });
+      let kpi3 = T.filter(t => t.repeatRepair).length;
       const wH = 22 * 9, downH = up.reduce((a, u) => a + Number(u.duration || 0), 0);
       const kpi4 = wH ? Math.round(((wH - downH) / wH) * 1000) / 10 : 99.9;
       const matched = ast.filter(a => a.matched).length;
@@ -2532,7 +2533,7 @@ create table if not exists kpi_manual (id int, month int, year int, value real, 
       const all = query('SELECT * FROM tickets WHERE month=? AND year=?', [currentMonth, currentYear]);
       const closed = all.filter(t => t.status === 'closed');
       const avg = closed.length ? Math.round(closed.reduce((a, t) => a + Number(t.resolveTime || 0), 0) / closed.length) : 0;
-      let rec = 0; all.forEach(t => { if (all.filter(t2 => t2.id !== t.id && t2.dept === t.dept && Math.abs(new Date(t2.date) - new Date(t.date)) < 172800000).length > 0) rec++; });
+      let rec = all.filter(t => t.repeatRepair).length;
       const rated = closed.filter(t => t.csat > 0); const csat = rated.length ? (rated.reduce((a, t) => a + Number(t.csat), 0) / rated.length).toFixed(1) : '–';
 
       document.getElementById('ts-total').textContent = all.length;
@@ -2543,7 +2544,7 @@ create table if not exists kpi_manual (id int, month int, year int, value real, 
       const body = document.getElementById('ticketTableBody');
       if (!rows.length) { body.innerHTML = empty('ticket', 'ไม่มีข้อมูลเคส'); return; }
       body.innerHTML = '<table><thead><tr><th>วันที่</th><th>ปัญหา</th><th>แผนก</th><th>เวลา(นาที)</th><th>สถานะ</th><th>จัดการ</th></tr></thead><tbody>' +
-        rows.map(t => `<tr><td class="td-mono">${t.date || '–'}</td><td>${t.problem || '–'} ${t.selfService ? '<span class="badge" style="background:var(--surface2)"><i class="ph ph-robot"></i> FAQ</span>' : ''}</td><td>${t.dept || '–'}</td><td class="td-mono">${t.resolveTime || '–'}</td><td>${t.status === 'closed' ? '<span class="badge badge-success"><i class="ph-fill ph-check-circle"></i> ปิดแล้ว</span>' : '<span class="badge badge-warning"><i class="ph-fill ph-clock"></i> เปิดอยู่</span>'}</td><td style="display:flex;gap:8px"><button class="icon-btn btn-edit" onclick='editRecord("tickets","${t.id}")'><i class="ph ph-pencil-simple"></i></button><button class="icon-btn btn-del" onclick='delRec("tickets","${t.id}")'><i class="ph ph-trash"></i></button></td></tr>`).join('') + '</tbody></table>';
+        rows.map(t => `<tr><td class="td-mono">${t.date || '–'}</td><td>${t.problem || '–'} ${t.selfService ? '<span class="badge" style="background:var(--surface2)"><i class="ph ph-robot"></i> FAQ</span>' : ''} ${t.repeatRepair ? '<span class="badge badge-warning"><i class="ph ph-arrows-clockwise"></i> ซ่อมซ้ำ</span>' : ''}</td><td>${t.dept || '–'}</td><td class="td-mono">${t.resolveTime || '–'}</td><td>${t.status === 'closed' ? '<span class="badge badge-success"><i class="ph-fill ph-check-circle"></i> ปิดแล้ว</span>' : '<span class="badge badge-warning"><i class="ph-fill ph-clock"></i> เปิดอยู่</span>'}</td><td style="display:flex;gap:8px"><button class="icon-btn btn-edit" onclick='editRecord("tickets","${t.id}")'><i class="ph ph-pencil-simple"></i></button><button class="icon-btn btn-del" onclick='delRec("tickets","${t.id}")'><i class="ph ph-trash"></i></button></td></tr>`).join('') + '</tbody></table>';
     }
 
     // ═══ PM ═══
@@ -2716,6 +2717,7 @@ create table if not exists kpi_manual (id int, month int, year int, value real, 
       <div class="form-group"><label class="form-label">ปัญหา</label><input class="form-input" id="f-problem" placeholder="รายละเอียดปัญหา" value="${d.problem || ''}"></div>
       <div class="form-row"><div class="form-group"><label class="form-label">เวลาแก้ไข (นาที)</label><input class="form-input" type="number" id="f-time" value="${d.resolveTime || ''}"></div><div class="form-group"><label class="form-label">CSAT (1–5)</label><input class="form-input" type="number" min="1" max="5" step="0.1" id="f-csat" value="${d.csat || ''}"></div></div>
       <div class="form-row"><div class="form-group"><label class="form-label">สถานะ</label><select class="form-select" id="f-status"><option value="open" ${!d.status || d.status === 'open' ? 'selected' : ''}>เปิดอยู่</option><option value="closed" ${d.status === 'closed' ? 'selected' : ''}>ปิดแล้ว</option></select></div><div class="form-group"><label class="form-label">รูปแบบการแก้ปัญหา</label><select class="form-select" id="f-self"><option value="0" ${!d.selfService ? 'selected' : ''}>IT ดำเนินการ</option><option value="1" ${d.selfService ? 'selected' : ''}>User แก้ไขเอง (FAQ)</option></select></div></div>
+      <div class="form-group" style="display:flex;align-items:center;gap:10px;padding:6px 0"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.5px"><input type="checkbox" id="f-repeat" style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer" ${d.repeatRepair ? 'checked' : ''}><span><i class="ph ph-arrows-clockwise" style="color:var(--yellow);margin-right:4px"></i>แจ้งซ่อมซ้ำภายใน 48 ชั่วโมง</span></label></div>
       <div class="modal-footer"><button class="btn" onclick="closeModal()">ยกเลิก</button><button class="btn btn-primary" onclick="saveTicket('${id}')"><i class="ph ph-floppy-disk"></i> บันทึก</button></div>`,
         pm: `<div class="modal-title"><i class="ph-fill ph-wrench text-accent"></i> เพิ่มเครื่อง PM</div>
       <div class="form-row"><div class="form-group"><label class="form-label">ชื่อเครื่อง</label><input class="form-input" id="f-name" placeholder="PC-001..." value="${d.name || ''}"></div><div class="form-group"><label class="form-label">ประเภท</label><select class="form-select" id="f-type"><option value="notebook" ${d.type === 'notebook' ? 'selected' : ''}>Notebook</option><option value="pc" ${d.type === 'pc' ? 'selected' : ''}>PC</option><option value="router">Network</option><option value="other">อื่นๆ</option></select></div></div>
@@ -2755,7 +2757,7 @@ create table if not exists kpi_manual (id int, month int, year int, value real, 
     function closeModalOutside(e) { if (e.target.id === 'modalOverlay') closeModal(); }
     function g(id) { return document.getElementById(id)?.value; }
     function afterSave(sec) { closeModal(); nav(sec); }
-    function saveTicket(id) { run(`INSERT OR REPLACE INTO tickets VALUES(?,?,?,?,?,?,?,?,?,?,?)`, [id, currentMonth, currentYear, g('f-date'), g('f-dept'), g('f-problem'), parseFloat(g('f-time')) || 0, parseFloat(g('f-csat')) || 0, g('f-status'), g('f-self') === '1' ? 1 : 0, '']); afterSave('tickets'); refreshDashboard(); }
+    function saveTicket(id) { run(`INSERT OR REPLACE INTO tickets VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, [id, currentMonth, currentYear, g('f-date'), g('f-dept'), g('f-problem'), parseFloat(g('f-time')) || 0, parseFloat(g('f-csat')) || 0, g('f-status'), g('f-self') === '1' ? 1 : 0, document.getElementById('f-repeat')?.checked ? 1 : 0, '']); afterSave('tickets'); refreshDashboard(); }
     function savePM(id) { const old = query('SELECT done,pmDate FROM pm WHERE id=?', [id])[0] || {}; run('INSERT OR REPLACE INTO pm VALUES(?,?,?,?,?,?,?,?)', [id, currentMonth, currentYear, g('f-name'), g('f-type'), g('f-location'), Number(old.done) || 0, old.pmDate || null]); afterSave('pm'); refreshDashboard(); }
     function saveSys(id) { run(`INSERT OR REPLACE INTO systems VALUES(?,?,?,?,?,?,?,?)`, [id, currentMonth, currentYear, g('f-name'), g('f-type'), g('f-approve'), g('f-install'), g('f-status')]); afterSave('systems'); refreshDashboard(); }
     function saveUptime(id) { run(`INSERT OR REPLACE INTO uptime VALUES(?,?,?,?,?,?,?,?)`, [id, currentMonth, currentYear, g('f-date'), g('f-location'), g('f-system'), g('f-cause'), parseFloat(g('f-duration')) || 0]); afterSave('uptime'); refreshDashboard(); }
