@@ -18,6 +18,9 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <!-- PDF Generation Libs for AI Presentation Prep -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
   <style>
     /* ═══ DESIGN TOKENS — NEUMORPHIC DARK (Image 1 + Image 2 fusion) ═══ */
     :root {
@@ -1631,6 +1634,10 @@
       <button class="nav-btn" data-sec="monthly"><i class="ph ph-file-text nav-icon"></i> สรุปรายเดือน</button>
 
       <div class="sidebar-footer">
+        <!-- New Feature: Export PDF for Presentation AI (Upgraded to handle Month Selection & Font Embedding) -->
+        <button class="btn-foot" onclick="openExportPdfModal()" style="background: var(--grad-primary); color: #fff; border: none; font-weight: 600; box-shadow: var(--glow-sm);">
+          <i class="ph ph-file-pdf"></i> Export PDF for AI Slide
+        </button>
         <button class="btn-foot" onclick="exportXLSX()"><i class="ph ph-download-simple"></i> Export Excel</button>
         <button class="btn-foot" onclick="document.getElementById('importFile').click()"><i
             class="ph ph-upload-simple"></i> Import Excel</button>
@@ -2079,8 +2086,6 @@
     let ALL = {};
 
     // Supabase connection
-    // 1) Create tables in Supabase with the SQL shown in SUPABASE_SCHEMA below.
-    // 2) Replace these two values with your project URL and anon key.
     const SUPABASE_URL = 'https://tzvwsbfslspwqmtxbjoc.supabase.co';
     const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR6dndzYmZzbHNwd3FtdHhiam9jIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkwNzE3OTcsImV4cCI6MjA5NDY0Nzc5N30.0jnTc1iG7oycY_GBdJS0FmWZ7q8Jx9PcvfyHhYqhLs8';
     const SUPABASE_ENABLED = !SUPABASE_URL.includes('YOUR_PROJECT_ID') && !SUPABASE_ANON_KEY.includes('YOUR_SUPABASE_ANON_KEY') && window.supabase;
@@ -2095,16 +2100,6 @@
       security: ['id', 'month', 'year', 'date', 'severity', 'description', 'affectedSystem', 'resolved', 'action'],
       kpi_manual: ['id', 'month', 'year', 'value']
     };
-    const SUPABASE_SCHEMA = `
-create table if not exists tickets (id text primary key, month int, year int, date text, dept text, problem text, "resolveTime" real, csat real, status text, "selfService" int, "repeatRepair" int default 0, note text);
-create table if not exists pm (id text primary key, month int, year int, name text, type text, location text, done int, "pmDate" text);
-create table if not exists systems (id text primary key, month int, year int, name text, type text, "approveDate" text, "installDate" text, status text);
-create table if not exists uptime (id text primary key, month int, year int, date text, location text, system text, cause text, duration real);
-create table if not exists assets (id text primary key, name text, type text, dept text, serial text, matched int);
-create table if not exists automation (id text primary key, month int, year int, name text, type text, "beforeMin" real, "afterMin" real, "freqPerMonth" real, "savedHours" real);
-create table if not exists security (id text primary key, month int, year int, date text, severity text, description text, "affectedSystem" text, resolved int, action text);
-create table if not exists kpi_manual (id int, month int, year int, value real, primary key (id, month, year));
-`;
     let isRemoteHydrating = false;
 
     // ═══ SQLite HELPERS ═══
@@ -2270,6 +2265,7 @@ create table if not exists kpi_manual (id int, month int, year int, value real, 
       }
     }
     window.uploadLocalDataToSupabase = uploadLocalDataToSupabase;
+    
     // ═══ KPI SCORE ENGINE ═══
     function calcScore(id, val) {
       const v = parseFloat(val) || 0;
@@ -2332,6 +2328,7 @@ create table if not exists kpi_manual (id int, month int, year int, value real, 
     }
     function v2Vals(mk) { const v = ALL[mk] || {}; return KPI_DEFS.map(k => { const r = v[k.id]; return (r === '' || r === undefined || r === null || isNaN(parseFloat(r))) ? null : parseFloat(r); }); }
 
+    // คืนค่ารายการเดือนที่พบบน DB และ v2 storage เพื่อสร้างตารางข้อมูลรวม
     function allMonthKeys() {
       const set = new Set();
       ['tickets', 'pm', 'systems', 'uptime', 'automation', 'security'].forEach(t => query(`SELECT DISTINCT month,year FROM ${t}`).forEach(r => set.add(MONTHS[r.month] + ' ' + r.year)));
@@ -2458,7 +2455,7 @@ create table if not exists kpi_manual (id int, month int, year int, value real, 
       if (!keys.length) { document.getElementById('ov-month-label').textContent = 'ยังไม่มีข้อมูล'; return; }
       const latest = keys[keys.length - 1];
       const { merged, total } = getMonthScores(latest);
-      document.getElementById('ov-month-label').textContent = 'ข้อมูลของเดือน: ' + latest;
+      document.getElementById('ov-month-label').textContent = 'ข้อมูลของเมือง: ' + latest;
       const cnt100 = merged.filter(x => x.score === 100).length, cntLow = merged.filter(x => x.score < 100).length;
 
       document.getElementById('ov-stats').innerHTML = `
@@ -2793,6 +2790,305 @@ create table if not exists kpi_manual (id int, month int, year int, value real, 
       XLSX.writeFile(wb, `itkpi-${new Date().toISOString().slice(0, 10)}.xlsx`);
       toast('Export Excel สำเร็จ');
     }
+    
+    let base64FontCache = null;
+
+    async function fetchThaiFont() {
+      if (base64FontCache) return base64FontCache;
+      // Fetch high-quality NotoSansThai font from open-source jsDelivr CDN
+      const url = 'https://cdn.jsdelivr.net/npm/@electron-fonts/noto-sans-thai@1.2.0/fonts/NotoSansThai-Regular.ttf';
+      const response = await fetch(url);
+      if (!response.ok) throw new Error('ไม่สามารถโหลดฟอนต์ภาษาไทยจาก CDN เพื่อใช้จัดทำ PDF ได้');
+      const arrayBuffer = await response.arrayBuffer();
+      
+      let binary = '';
+      const bytes = new Uint8Array(arrayBuffer);
+      const len = bytes.byteLength;
+      for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      base64FontCache = btoa(binary);
+      return base64FontCache;
+    }
+
+    function openExportPdfModal() {
+      const keys = allMonthKeys();
+      if (!keys.length) {
+        toast('ไม่พบฐานข้อมูลรายเดือนสำหรับดาวน์โหลดรายงาน', true);
+        return;
+      }
+      
+      const currentLabel = MONTHS[currentMonth] + ' ' + currentYear;
+      let optionsHtml = keys.map(k => `
+        <option value="${k}" ${k === currentLabel ? 'selected' : ''}>${k}</option>
+      `).join('');
+
+      const html = `
+        <div class="modal-title"><i class="ph-fill ph-file-pdf text-accent"></i> ส่งออกรายงาน PDF (สำหรับสร้างสไลด์ AI)</div>
+        <div class="form-group">
+          <label class="form-label">เลือกเดือนรายงานที่ต้องการ</label>
+          <select class="form-select" id="f-export-month">${optionsHtml}</select>
+        </div>
+        <div class="form-group">
+          <p style="font-size: 12px; color: var(--text2); line-height: 1.4;">
+            <i class="ph ph-info" style="color: var(--accent);"></i> ระบบจะสกัดข้อมูลจากระบบ SQLite รวมถึงดึงประวัติธุรกรรมเพื่อแสดงผลดิบในรายงานด้วย เพื่อให้อ่านภาษาไทยและพล็อตลงสไลด์ของระบบ AI อื่นๆ ได้อย่างถูกต้อง
+          </p>
+        </div>
+        <div class="modal-footer">
+          <button class="btn" onclick="closeModal()">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="doExportPDF()"><i class="ph ph-download-simple"></i> ตกลงและบันทึก PDF</button>
+        </div>
+      `;
+      document.getElementById('modalContent').innerHTML = html;
+      document.getElementById('modalOverlay').classList.add('open');
+    }
+
+    async function doExportPDF() {
+      const mk = document.getElementById('f-export-month').value;
+      closeModal();
+
+      // Show loader screen to wait for external fonts
+      const overlay = document.getElementById('loadingOverlay');
+      const loadText = document.getElementById('loadingText');
+      overlay.style.display = 'flex';
+      loadText.textContent = 'กำลังดาวน์โหลดฟอนต์ภาษาไทยและจัดเตรียมข้อมูล...';
+
+      try {
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF({
+          orientation: 'portrait',
+          unit: 'mm',
+          format: 'a4'
+        });
+
+        // Register Thai Font to jsPDF Virtual File System (VFS)
+        const fontBase64 = await fetchThaiFont();
+        doc.addFileToVFS('NotoSansThai-Regular.ttf', fontBase64);
+        doc.addFont('NotoSansThai-Regular.ttf', 'NotoSansThai', 'normal');
+        doc.setFont('NotoSansThai');
+
+        const parts = mk.split(' ');
+        const m = MONTHS.indexOf(parts[0]);
+        const yr = parseInt(parts[1], 10);
+
+        const { merged, total } = getMonthScores(mk);
+
+        // ═══ PAGE 1: TITLE & EXECUTIVE SUMMARY ═══
+        doc.setFontSize(22);
+        doc.text("IT KPI Performance Report (รายงานไอทีประจำเดือน)", 20, 25);
+
+        doc.setFontSize(11);
+        doc.text(`หน่วยงาน: บริษัท มาซารุ กรุ๊ป (Masaru Group)`, 20, 33);
+        doc.text(`ประจำเดือนและปีภาษี: ${mk}`, 20, 39);
+        doc.text(`เวลาที่ออกรายงาน: ${new Date().toLocaleString('th-TH')}`, 20, 45);
+
+        // Separator line (Corporate Violet color)
+        doc.setDrawColor(124, 92, 252);
+        doc.setLineWidth(0.8);
+        doc.line(20, 50, 190, 50);
+
+        doc.setFontSize(14);
+        doc.text("1. บทวิเคราะห์ผลงานของผู้บริหาร (Executive Summary Profile)", 20, 60);
+
+        doc.setFontSize(11);
+        doc.text(`- ดัชนีรวมถ่วงน้ำหนักประสิทธิภาพไอที (Weighted Score Index): ${total}%`, 20, 68);
+
+        const pass = merged.filter(x => x.score === 100).length;
+        const warn = merged.filter(x => x.score > 0 && x.score < 100).length;
+        const fail = merged.filter(x => x.score === 0).length;
+
+        doc.text(`- จำนวนดัชนีวัดผลที่ผ่านตามเกณฑ์เป้าหมายดีเยี่ยม (Score 100%): ${pass} รายการ`, 20, 75);
+        doc.text(`- จำนวนดัชนีวัดผลที่ต้องได้รับการเฝ้าระวัง (Score 70%-90%): ${warn} รายการ`, 20, 81);
+        doc.text(`- จำนวนดัชนีวัดผลที่ยังไม่ผ่านการประเมิน (Score 0%): ${fail} รายการ`, 20, 87);
+
+        doc.setFontSize(11);
+        doc.text("AI Presentation Deck Builder Instructions (English Prompt Context):", 20, 98);
+        
+        const promptText = [
+          "Please feed this standardized clean PDF into Gamma.app, Tome, Canva or ChatGPT.",
+          "Use the embedded TrueType NotoSansThai font encoding to extract raw data without scrambling letters.",
+          "Construct a professional 12-slide layout representing each IT KPI under Section 2,",
+          "and include raw database logs from Section 3 as detailed slides notes or verification panels."
+        ];
+        doc.setFontSize(9);
+        doc.text(promptText, 20, 104);
+
+        // English translations to feed seamlessly into Slide AI programs
+        const engKpis = [
+          "Software License & Permission Audits",
+          "Avg. Helpdesk Problem Resolution Time",
+          "Helpdesk Recurring Repair Incidents (48h)",
+          "Core Internet Network & CCTV Availability",
+          "Physical IT Asset Tracking Accuracy",
+          "Preventive Maintenance Tasks (PM)",
+          "Approved System Deployment Lead Time",
+          "Customer Support Satisfaction Rate (CSAT)",
+          "User Self-Service Portal FAQ Efficiency",
+          "On-Time Milestone System Rollout Rate",
+          "Automation Script & RPA Time Reclaimed",
+          "Active Cybersecurity System Incidents"
+        ];
+
+        const headers1 = [["Slide ID", "ตัวชี้วัดประสิทธิภาพระบบไอที (Metrics Scope)", "ผลงานจริง", "เกณฑ์มาตรฐานประเมิน", "คะแนน", "สถานะ"]];
+        const body1 = merged.map((k, i) => {
+          const def = KPI_DEFS[i];
+          let statusText = "ดีเยี่ยม (Met)";
+          if (k.score < 100 && k.score >= 70) statusText = "เฝ้าระวัง (Warning)";
+          if (k.score < 70) statusText = "ปรับปรุงด่วน (Critical)";
+
+          return [
+            `Slide ${i+1}`,
+            `[KPI #${def.id}] ${def.name}\n(${engKpis[i]})`,
+            `${k.val != null ? k.val : '—'} ${def.unit}`,
+            def.target,
+            `${k.score}%`,
+            statusText
+          ];
+        });
+
+        doc.autoTable({
+          startY: 125,
+          head: headers1,
+          body: body1,
+          theme: 'striped',
+          styles: { font: "NotoSansThai", fontSize: 8 },
+          headStyles: { font: "NotoSansThai", fillColor: [124, 92, 252] },
+          columnStyles: {
+            1: { cellWidth: 65 }
+          }
+        });
+
+        // ═══ PAGE 2: TIME-SERIES TREND DATABASE ═══
+        doc.addPage();
+        doc.setFont("NotoSansThai");
+        doc.setFontSize(15);
+        doc.text("2. ฐานข้อมูลแนวโน้มคะแนนดิบรายเดือน (Time-Series Trend Database)", 20, 20);
+        
+        doc.setFontSize(10);
+        doc.text("ตารางข้อมูลประวัติภาพรวมคะแนนของทุกเดือนในระบบไอทีสำหรับนำเข้าโปรแกรมวาดกราฟเส้น หรือวิเคราะห์ข้อมูลเชิงตัวเลข", 20, 27);
+
+        const keys = allMonthKeys();
+        const trendHeaders = [["เดือนรายงาน", "ดัชนีรวม", "K1", "K2", "K3", "K4", "K5", "K6", "K7", "K8", "K9", "K10", "K11", "K12"]];
+        const trendBody = keys.map(k => {
+          const { merged: mScores, total: mTotal } = getMonthScores(k);
+          return [
+            k,
+            `${mTotal.toFixed(1)}%`,
+            ...mScores.map(x => x.score != null ? `${x.score}%` : '—')
+          ];
+        });
+
+        doc.autoTable({
+          startY: 34,
+          head: trendHeaders,
+          body: trendBody,
+          theme: 'grid',
+          styles: { font: "NotoSansThai", fontSize: 8, cellPadding: 2 },
+          headStyles: { font: "NotoSansThai", fillColor: [56, 189, 248] },
+          columnStyles: {
+            0: { cellWidth: 26 },
+            1: { cellWidth: 16 }
+          }
+        });
+
+        // ═══ PAGE 3: GRANULAR TRANSACTION DATASETS ═══
+        doc.addPage();
+        doc.setFont("NotoSansThai");
+        doc.setFontSize(15);
+        doc.text("3. บันทึกรายการเชิงลึกประจำเดือน (Current Month Granular Datasets)", 20, 20);
+
+        doc.setFontSize(10);
+        doc.text(`ข้อมูลดิบที่สกัดมาจากระบบ SQLite ของมาซารุประจำช่วงเวลา: ${mk} เพื่อใช้ในการพิสูจน์ที่มาของดัชนีแต่ละหัวข้อ`, 20, 26);
+
+        // 3.1 Helpdesk Support Tickets
+        const tickets = query('SELECT dept, problem, status, resolveTime, csat FROM tickets WHERE month=? AND year=?', [m, yr]);
+        doc.setFontSize(11);
+        doc.text("บันทึกประวัติใบงานแจ้งซ่อมระบบ (Helpdesk Support Ticket Logs):", 20, 36);
+
+        const ticketHeaders = [["แผนก", "รายละเอียดปัญหาและบริการ", "เวลาที่ใช้ (นาที)", "คะแนน CSAT", "สถานะ"]];
+        const ticketBody = tickets.slice(0, 15).map(t => [
+          t.dept || '—',
+          t.problem || '—',
+          t.resolveTime || '0',
+          t.csat || '—',
+          t.status === 'closed' ? 'ปิดแล้ว (closed)' : 'เปิดอยู่ (open)'
+        ]);
+
+        doc.autoTable({
+          startY: 40,
+          head: ticketHeaders,
+          body: ticketBody.length ? ticketBody : [["ไม่มีข้อมูลเคสในรอบเดือนนี้", "", "", "", ""]],
+          theme: 'striped',
+          styles: { font: "NotoSansThai", fontSize: 8 },
+          headStyles: { font: "NotoSansThai", fillColor: [37, 99, 235] },
+          columnStyles: {
+            1: { cellWidth: 70 }
+          }
+        });
+
+        // 3.2 System Projects Deployment
+        const systems = query('SELECT name, type, approveDate, installDate, status FROM systems WHERE month=? AND year=?', [m, yr]);
+        const sysY = doc.lastAutoTable.finalY + 12;
+        doc.setFont("NotoSansThai");
+        doc.setFontSize(11);
+        doc.text("บันทึกการส่งมอบและติดตั้งระบบไอที (System Deployments & Projects):", 20, sysY);
+
+        const sysHeaders = [["โครงการ / การดำเนินการไอที", "ประเภทระบบ", "วันอนุมัติแผน", "วันที่ติดตั้งแล้วเสร็จ", "สถานะ SLA"]];
+        const sysBody = systems.map(s => [
+          s.name || '—',
+          s.type || '—',
+          s.approveDate || '—',
+          s.installDate || '—',
+          s.status === 'done' ? 'เสร็จสิ้น (done)' : s.status === 'late' ? 'ล่าช้า (late)' : 'ดำเนินการอยู่ (pending)'
+        ]);
+
+        doc.autoTable({
+          startY: sysY + 4,
+          head: sysHeaders,
+          body: sysBody.length ? sysBody : [["ไม่มีรายการบันทึกระบบในรอบเดือนนี้", "", "", "", ""]],
+          theme: 'striped',
+          styles: { font: "NotoSansThai", fontSize: 8 },
+          headStyles: { font: "NotoSansThai", fillColor: [139, 92, 246] }
+        });
+
+        // 3.3 Network Downtime Outages
+        const uptimes = query('SELECT date, location, system, duration, cause FROM uptime WHERE month=? AND year=?', [m, yr]);
+        const upY = doc.lastAutoTable.finalY + 12;
+        doc.setFont("NotoSansThai");
+        doc.setFontSize(11);
+        doc.text("บันทึกประวัติระบบโครงข่ายขัดข้อง (Network & CCTV Outages Log):", 20, upY);
+
+        const upHeaders = [["วันที่เกิดเหตุ", "สถานที่ตั้งไซด์งาน", "อุปกรณ์/ส่วนบริการ", "ระยะเวลาดับ (ชม.)", "สาเหตุหลักและการกู้คืน"]];
+        const upBody = uptimes.map(u => [
+          u.date || '—',
+          u.location || '—',
+          u.system || '—',
+          `${u.duration || 0} ชม.`,
+          u.cause || '—'
+        ]);
+
+        doc.autoTable({
+          startY: upY + 4,
+          head: upHeaders,
+          body: upBody.length ? upBody : [["ระบบเสถียร 100% ไม่มีบันทึก Downtime ขัดข้อง", "", "", "", ""]],
+          theme: 'striped',
+          styles: { font: "NotoSansThai", fontSize: 8 },
+          headStyles: { font: "NotoSansThai", fillColor: [239, 68, 68] },
+          columnStyles: {
+            4: { cellWidth: 65 }
+          }
+        });
+
+        doc.save(`IT-KPI-Presentation-Prep-${mk}.pdf`);
+        toast('จัดทำรายงาน PDF คมชัดปราศจากตัวหนังสือภาษาไทยเพี้ยนสำเร็จแล้ว!');
+      } catch (err) {
+        console.error('PDF Generate Failed', err);
+        toast('เกิดข้อผิดพลาดในการสร้างไฟล์ PDF: ' + err.message, true);
+      } finally {
+        overlay.style.display = 'none';
+      }
+    }
+
     function importXLSX(input) {
       const file = input.files[0]; if (!file) return;
       const reader = new FileReader();
@@ -2813,6 +3109,7 @@ create table if not exists kpi_manual (id int, month int, year int, value real, 
       };
       reader.readAsArrayBuffer(file); input.value = '';
     }
+    
     function exportJSON() {
       const data = { version: 'unified-v1', exported: new Date().toISOString(), sqlite: {}, v2: ALL };
       allMonthKeys().forEach(mk => { data.sqlite[mk] = getMonthScores(mk).merged.map((x, i) => ({ kpi: i + 1, val: x.val, score: x.score, src: x.src })); });
@@ -2876,14 +3173,3 @@ create table if not exists kpi_manual (id int, month int, year int, value real, 
 </body>
 
 </html>
-
-
-
-
-
-
-
-
-
-
-
